@@ -1,101 +1,152 @@
-import Image from "next/image";
+'use client';
+
+import { useState, useCallback, useRef } from 'react';
+import ResultsPanel from '@/components/ResultsPanel';
+import type { InterpretResponse } from '@/lib/types';
+
+type AppStatus = 'idle' | 'loading' | 'success' | 'error';
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const [image, setImage] = useState<{ src: string; base64: string; mediaType: string } | null>(null);
+  const [status, setStatus] = useState<AppStatus>('idle');
+  const [result, setResult] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  function loadFile(file: File) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      const [header, base64] = dataUrl.split(',');
+      const mediaType = header.match(/:(.*?);/)?.[1] ?? 'image/png';
+      setImage({ src: dataUrl, base64, mediaType });
+      setStatus('idle');
+      setResult('');
+      setErrorMsg('');
+    };
+    reader.readAsDataURL(file);
+  }
+
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const item = Array.from(e.clipboardData.items).find((i) => i.type.startsWith('image/'));
+    if (item) loadFile(item.getAsFile()!);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file?.type.startsWith('image/')) loadFile(file);
+  }, []);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) loadFile(file);
+  };
+
+  async function handleInterpret() {
+    if (!image) return;
+    setStatus('loading');
+    setResult('');
+    setErrorMsg('');
+    try {
+      const res = await fetch('/api/interpret', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageData: image.base64, mediaType: image.mediaType }),
+      });
+      const data: InterpretResponse = await res.json();
+      if (!res.ok || data.error) {
+        setStatus('error');
+        setErrorMsg(data.error ?? 'Request failed.');
+        return;
+      }
+      setResult(data.interpretation);
+      setStatus('success');
+      setTimeout(() => {
+        document.getElementById('results-panel')?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    } catch {
+      setStatus('error');
+      setErrorMsg('Network error. Please check your connection.');
+    }
+  }
+
+  return (
+    <div
+      className="min-h-screen bg-slate-50 text-slate-900"
+      onPaste={handlePaste}
+    >
+      <header className="bg-white border-b border-slate-200 px-6 py-4 print:hidden">
+        <h1 className="text-lg font-semibold text-slate-800">Smart Balance Dictator</h1>
+        <p className="text-sm text-slate-500">Paste or upload a Smart Balance report image to generate a clinical interpretation</p>
+      </header>
+
+      <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
+        {/* Drop zone */}
+        <div
+          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={handleDrop}
+          onClick={() => fileInputRef.current?.click()}
+          className={`relative border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors
+            ${isDragging ? 'border-teal-400 bg-teal-50' : 'border-slate-300 bg-white hover:border-teal-400 hover:bg-teal-50/30'}
+            ${image ? 'py-4' : ''}`}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+
+          {image ? (
+            <div className="space-y-3">
+              <img
+                src={image.src}
+                alt="Smart Balance report"
+                className="max-h-80 mx-auto rounded-lg shadow-sm object-contain"
+              />
+              <p className="text-xs text-slate-400">Click to replace · paste a new image anywhere on this page</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="text-4xl text-slate-300">⌘V</div>
+              <p className="text-slate-600 font-medium">Paste your Smart Balance report here</p>
+              <p className="text-sm text-slate-400">or click to browse · drag and drop supported</p>
+            </div>
+          )}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+
+        {image && (
+          <button
+            onClick={handleInterpret}
+            disabled={status === 'loading'}
+            className="w-full py-3 bg-teal-600 text-white font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {status === 'loading' ? 'Interpreting...' : 'Generate Interpretation'}
+          </button>
+        )}
+
+        {status === 'loading' && (
+          <div className="flex items-center gap-3 p-4 bg-white rounded-lg border border-slate-200">
+            <div className="w-4 h-4 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm text-slate-600">Analyzing posturography report...</p>
+          </div>
+        )}
+
+        {status === 'error' && (
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+            {errorMsg}
+          </div>
+        )}
+
+        {status === 'success' && result && (
+          <ResultsPanel content={result} />
+        )}
+      </div>
     </div>
   );
 }
